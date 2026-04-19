@@ -1,0 +1,31 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+aiosqlite==0.20.0
+alembic==1.14.0
+
+# Settings / validation
+pydantic==2.10.4
+pydantic-settings==2.7.0
+
+# ML + data
+scikit-learn==1.6.0
+joblib==1.4.2
+numpy==2.2.1
+pandas==2.2.3
+
+# Scheduler
+apscheduler==3.11.0
+
+# HTTP / LLM
+httpx==0.28.1
+openai==1.58.1
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
+freezegun==1.5.1
