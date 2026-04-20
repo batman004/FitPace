@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-BASE_URL = os.getenv("FITPACE_URL", "http://127.0.0.1:8000")
+BASE_URL = os.getenv("FITPACE_URL", "http://127.0.0.1:8001")
 PASSWORD = "correct horse battery staple"
 
 

@@ -78,6 +78,11 @@ Rules for the SQL you emit:
 - Limit to at most {max_rows} rows with `LIMIT {max_rows}`.
 - Prefer aggregating (MIN/MAX/AVG/COUNT) or ordering + limiting when the question asks
   for a single value ("current weight", "latest log", "how many goals").
+- When the question concerns body composition, health, BMI, fitness level, diet,
+  or "how am I doing", select the full relevant profile at once -
+  height_cm, weight_kg, date_of_birth, and sex from users - plus, when useful,
+  the user's active goals and recent progress_logs. A richer row lets the
+  answer reference multiple signals instead of a single number in isolation.
 """
 ).replace("{max_rows}", str(MAX_ROWS))
 
@@ -88,6 +93,19 @@ You will receive the user's question plus a JSON array of rows retrieved from
 their own fitness database. Answer using ONLY those rows. If the rows are empty
 or insufficient, say so honestly rather than speculating. Keep the reply to 1-4
 short sentences unless the user explicitly asked for a list.
+
+If the rows contain several profile fields (e.g. height_cm + weight_kg,
+date_of_birth, sex, goal progress, recent logs) use them together:
+- Compute BMI (weight_kg / (height_cm/100)^2) when both are present and the
+  question is about body composition or health; call out the standard bands
+  (<18.5 underweight, 18.5-24.9 normal, 25-29.9 overweight, >=30 obese) while
+  reminding the user BMI alone doesn't capture muscle mass or body composition.
+- Derive age from date_of_birth if provided.
+- Cross-reference active goals and recent progress logs when explaining pace
+  or progress ("you're on track for your weight-loss goal, logging X kg last
+  week").
+Never invent data that isn't in the rows; if a field needed for the answer is
+missing, tell the user which data would help.
 """
 
 
@@ -118,7 +136,17 @@ def _strip_fences(sql: str) -> str:
 
 
 def validate_sql(sql: str) -> str:
-    """Enforce SELECT-only, single-statement SQL. Return the cleaned text."""
+    """Enforce SELECT-only, single-statement SQL scoped to the current user.
+
+    Checks applied, in order:
+      1. Non-empty after fence stripping.
+      2. No multiple statements (no interior semicolons).
+      3. First token is SELECT or WITH.
+      4. No forbidden keywords (INSERT/UPDATE/DELETE/DROP/ALTER/...).
+      5. MUST reference the :user_id bind parameter so every query is scoped
+         to the caller. Without this a compliant SELECT could still leak
+         another user's rows (e.g. `SELECT weight_kg FROM users LIMIT 1`).
+    """
     cleaned = _strip_fences(sql)
     if not cleaned:
         raise UnsafeSQLError("empty SQL")
@@ -129,25 +157,25 @@ def validate_sql(sql: str) -> str:
         raise UnsafeSQLError(f"only SELECT/WITH queries are allowed, got '{first}'")
     if _FORBIDDEN.search(cleaned):
         raise UnsafeSQLError("SQL contains a forbidden keyword")
+    if ":user_id" not in cleaned:
+        raise UnsafeSQLError(
+            "query must be scoped to the caller via the :user_id bind parameter"
+        )
     return cleaned
 
 
 async def execute_sql(
     db: AsyncSession, sql: str, user_id: UUID
 ) -> list[dict[str, Any]]:
-    """Run the validated SQL with :user_id bound. Returns up to MAX_ROWS rows."""
-    params: dict[str, Any] = {}
-    if ":user_id" in sql:
-        # Bind with the same UUID type our ORM uses so conversion is correct on
-        # both Postgres (native uuid) and SQLite (char(32) hex).
-        statement = text(sql).bindparams(
-            bindparam("user_id", type_=PGUUID(as_uuid=True))
-        )
-        params["user_id"] = user_id
-    else:
-        statement = text(sql)
+    """Run the validated SQL with :user_id bound. Returns up to MAX_ROWS rows.
 
-    result = await db.execute(statement, params)
+    `validate_sql` guarantees `:user_id` is present, so we can always bind it
+    with the PG UUID type (works on Postgres native uuid + SQLite char(32)).
+    """
+    statement = text(sql).bindparams(
+        bindparam("user_id", type_=PGUUID(as_uuid=True))
+    )
+    result = await db.execute(statement, {"user_id": user_id})
     rows: list[dict[str, Any]] = []
     for row in result.mappings():
         rows.append({k: _jsonable(v) for k, v in row.items()})

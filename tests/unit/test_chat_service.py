@@ -15,7 +15,9 @@ def test_validate_sql_accepts_plain_select() -> None:
 
 def test_validate_sql_accepts_cte() -> None:
     out = validate_sql(
-        "WITH latest AS (SELECT * FROM progress_logs LIMIT 5) SELECT * FROM latest"
+        "WITH latest AS (SELECT * FROM progress_logs WHERE goal_id IN "
+        "(SELECT id FROM goals WHERE user_id = :user_id) LIMIT 5) "
+        "SELECT * FROM latest"
     )
     assert out.lower().startswith("with")
 
@@ -29,8 +31,14 @@ def test_validate_sql_strips_markdown_fences() -> None:
 
 
 def test_validate_sql_strips_trailing_semicolon() -> None:
-    out = validate_sql("SELECT 1;")
-    assert out == "SELECT 1"
+    out = validate_sql("SELECT 1 WHERE :user_id IS NOT NULL;")
+    assert out.endswith("IS NOT NULL")
+
+
+def test_validate_sql_requires_user_id_filter() -> None:
+    """Defense-in-depth: a compliant SELECT without :user_id would still leak."""
+    with pytest.raises(UnsafeSQLError, match="user_id"):
+        validate_sql("SELECT weight_kg FROM users LIMIT 1")
 
 
 @pytest.mark.parametrize(

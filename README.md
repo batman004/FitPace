@@ -8,8 +8,6 @@ goals, projects whether they'll hit them on time, manages a goal state
 machine, and exposes a natural-language `/chat` endpoint grounded in the
 user's own data via LLM-generated SQL.
 
-The original specification lives in [`context.md`](./context.md).
-
 ---
 
 ## 1. Quick start
@@ -56,7 +54,7 @@ make docker-seed   # generate synthetic data + train model in the container
 | Progress ingestion | Append-only time-series per goal |
 | **Trajectory projection** | scikit-learn `StandardScaler + LinearRegression` pipeline predicts a 0–100 pace score; ETA derived from the fitted rolling slope |
 | **Goal state machine** | `ON_TRACK ↔ AT_RISK ↔ OFF_TRACK ↔ RECOVERED`, auditable through `goal_state_events` |
-| **Natural-language chat** | LLM generates a SELECT against the DB, results are fed back into a second LLM call to produce a grounded answer |
+| **Natural-language chat** | LLM generates a `:user_id`-scoped SELECT against the DB, results are fed back into a second LLM call to produce a grounded answer (computes BMI from height + weight, derives age from DOB) |
 | Data + model bootstrap | `data/generate_synthetic.py` → `app/ml/train.py` → `model.pkl` |
 | Migrations | Alembic (versions committed under `migrations/`) |
 
@@ -84,6 +82,52 @@ with printed request/response pairs — it doubles as executable documentation.
 ---
 
 ## 4. Architecture at a glance
+
+```mermaid
+flowchart LR
+    client["Client<br/>(curl / demo.py / Swagger)"]
+
+    subgraph api["FastAPI app (app/main.py)"]
+        direction TB
+        routers["Routers<br/>users · goals · progress · chat"]
+        subgraph services["Services"]
+            direction TB
+            traj["trajectory_service<br/>ML inference + ETA"]
+            sm["state_machine<br/>ON_TRACK ↔ AT_RISK ↔<br/>OFF_TRACK ↔ RECOVERED"]
+            chat["chat_service<br/>NL → SQL → rows → NL"]
+        end
+        security["security.py<br/>PBKDF2-SHA256"]
+        routers --> services
+        routers --> security
+    end
+
+    subgraph ml["ML pipeline (app/ml)"]
+        direction TB
+        features["features.py<br/>shared feature vector"]
+        model[("model.pkl<br/>StandardScaler +<br/>LinearRegression")]
+        train["train.py"]
+        synth["data/generate_synthetic.py"]
+        synth --> train --> model
+        features --> model
+    end
+
+    subgraph data["Persistence"]
+        direction TB
+        orm["SQLAlchemy async ORM<br/>users · goals · progress_logs ·<br/>goal_state_events"]
+        db[("PostgreSQL / SQLite<br/>(Alembic migrations)")]
+        orm --> db
+    end
+
+    llm["OpenAI API<br/>(swap-in LLMComplete)"]
+
+    client -->|HTTP| routers
+    traj --> features
+    traj --> orm
+    sm --> orm
+    chat -->|"LLM #1: NL → SQL"| llm
+    chat -->|"validated SELECT<br/>:user_id bound"| orm
+    chat -->|"LLM #2: rows → NL"| llm
+```
 
 ```
 app/
@@ -137,13 +181,25 @@ tests/
   so the chat pipeline is fully unit-tested with zero network calls.
 - **SELECT-only, parameter-bound chat SQL.** The LLM is explicitly instructed
   to emit a single SELECT using a `:user_id` bind parameter. On top of the
-  prompt:
-  1. `validate_sql()` strips code fences, rejects any non-SELECT,
-     multi-statement, or forbidden-keyword payload
+  prompt, `validate_sql()` enforces, in order:
+  1. Strip code fences and trailing semicolons; reject anything empty.
+  2. Reject multi-statement payloads (no interior `;`).
+  3. First token must be `SELECT` or `WITH`.
+  4. Reject any forbidden keyword
      (`INSERT/UPDATE/DELETE/DROP/ALTER/TRUNCATE/CREATE/GRANT/REVOKE/…`).
-  2. `:user_id` is rebound server-side with SQLAlchemy's `PGUUID` type so the
-     LLM can't inject a different UUID.
-  3. Rows are capped at 50 before being stuffed back into the answer prompt.
+  5. **Require** the `:user_id` bind parameter to appear in the query — without
+     this a compliant SELECT could still leak another user's rows
+     (e.g. `SELECT weight_kg FROM users LIMIT 1`).
+
+  Then `:user_id` is rebound server-side with SQLAlchemy's `PGUUID` type
+  (`as_uuid=True`) so the value comes from the request body — the LLM never
+  gets to inline a UUID. Rows are coerced to JSON-safe primitives and capped
+  at 50 before being stuffed into the answer prompt.
+- **Profile-aware answers.** When the question touches body composition or
+  health, the SQL prompt nudges the LLM to fetch the full profile in one shot
+  (height, weight, DOB, sex), and the answer prompt instructs it to compute
+  BMI with the standard bands and derive age from DOB — so a single query
+  produces a multi-signal reply rather than a one-number drive-by.
 
 ### Data flow: `POST /progress`
 
@@ -175,7 +231,7 @@ client ─► /chat(question, user_id)
 
 ```bash
 make test
-# 55 passed in ~2s
+# 56 passed in ~2s
 ```
 
 - **Unit tests** cover feature engineering, trajectory service (incl. user-
@@ -205,7 +261,7 @@ network needed.
 - End-to-end demo script and Makefile
 - Docker Compose stack (Postgres + API)
 - Alembic migrations
-- 55-test suite
+- 56-test suite
 
 ### Deferred (explicit next steps)
 
@@ -245,7 +301,36 @@ Most worth reading, in order:
 
 ---
 
-## 8. One-line environment reference
+## 8. FAQ for reviewers
+
+**`/chat` returned `rows: []` and the model said it doesn't know — is that a bug?**
+No, that's the user-scoping working. Every chat SQL is required to filter by
+`:user_id` (validator rule 5 above), and the bind value comes from the request
+body — the LLM never gets to inline a UUID. So if the supplied `user_id`
+doesn't exist in the DB you're hitting, you get an empty result set and an
+honest "I don't know" rather than someone else's data. A common cause is
+running `docker compose down -v` (which wipes the Postgres volume) and then
+querying with a `user_id` from before the wipe; create a fresh user via
+`POST /users` and use the returned `id`.
+
+**`make run` and `docker compose up` give different answers — why?**
+They point at different databases on different ports.
+- `make run` → port `:8001`, SQLite at `./fitpace.db` (developer convenience).
+- `docker compose up` → port `:8000`, dockerised Postgres on a named volume.
+
+Pick one per session. `make demo` always targets `:8001`; for the Postgres
+stack run the demo with `BASE_URL=http://127.0.0.1:8000 make demo`.
+
+**Trajectory came back `pace_score: 50` after creating the goal — broken?**
+No. The trajectory service needs ≥2 logs to fit a slope; until then it
+returns a neutral fallback (`pace_score=50`, `eta_date=target_date`) and the
+state machine is intentionally skipped so a single log can't tip a goal
+`OFF_TRACK`. Post a couple of logs and the score becomes a real ML
+prediction.
+
+---
+
+## 9. One-line environment reference
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
