@@ -10,7 +10,14 @@ from typing import Any, Protocol, Sequence
 import joblib
 import numpy as np
 
-from app.ml.features import FEATURE_ORDER, build_feature_vector, ground_truth_pace_score
+from app.ml.features import (
+    FEATURE_ORDER,
+    age_from_dob,
+    build_feature_vector,
+    ground_truth_pace_score,
+    sex_to_code,
+)
+from app.models.enums import Sex
 
 MODEL_PATH = Path(__file__).resolve().parents[1] / "ml" / "model.pkl"
 
@@ -52,12 +59,24 @@ class _LogLike(Protocol):
     value: float
 
 
+class _UserLike(Protocol):
+    date_of_birth: date | None
+    height_cm: float | None
+    weight_kg: float | None
+    sex: Sex | None
+
+
 def compute_trajectory(
     goal: _GoalLike,
     progress_logs: Sequence[_LogLike],
     today: date | None = None,
+    user: _UserLike | None = None,
 ) -> TrajectoryResult:
-    """Compute pace score + ETA for a goal given its ordered progress logs."""
+    """Compute pace score + ETA for a goal given its ordered progress logs.
+
+    If `user` is provided, profile fields (age from DOB, height, weight, sex)
+    are fed into the model. Missing fields fall back to population defaults.
+    """
     now = datetime.now(timezone.utc)
     today = today or now.date()
 
@@ -76,6 +95,14 @@ def compute_trajectory(
         for log in progress_logs
     ]
 
+    if user is not None:
+        user_age = age_from_dob(user.date_of_birth, today)
+        user_height_cm = user.height_cm
+        user_weight_kg = user.weight_kg
+        user_sex_code = sex_to_code(user.sex)
+    else:
+        user_age = user_height_cm = user_weight_kg = user_sex_code = None
+
     feats = build_feature_vector(
         values=values,
         logged_dates=dates,
@@ -84,6 +111,10 @@ def compute_trajectory(
         start_date=goal.start_date,
         target_date=goal.target_date,
         today=today,
+        user_age=user_age,
+        user_height_cm=user_height_cm,
+        user_weight_kg=user_weight_kg,
+        user_sex_code=user_sex_code,
     )
 
     model = _get_model()

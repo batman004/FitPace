@@ -6,6 +6,8 @@ from typing import Sequence
 
 import numpy as np
 
+from app.models.enums import Sex
+
 FEATURE_ORDER: tuple[str, ...] = (
     "days_elapsed",
     "current_value",
@@ -14,7 +16,37 @@ FEATURE_ORDER: tuple[str, ...] = (
     "slope_ratio",
     "pct_progress",
     "days_remaining",
+    # User-profile features. All have safe defaults when a goal has no
+    # associated user profile fields set.
+    "user_age",
+    "user_height_cm",
+    "user_weight_kg",
+    "user_sex_code",
 )
+
+DEFAULT_AGE = 35.0
+DEFAULT_HEIGHT_CM = 170.0
+DEFAULT_WEIGHT_KG = 75.0
+DEFAULT_SEX_CODE = 2  # neutral / prefer_not_to_say
+
+_SEX_CODES: dict[Sex, int] = {
+    Sex.male: 0,
+    Sex.female: 1,
+    Sex.other: 2,
+    Sex.prefer_not_to_say: 2,
+}
+
+
+def age_from_dob(dob: date | None, today: date) -> float | None:
+    if dob is None:
+        return None
+    return max(0.0, (today - dob).days / 365.25)
+
+
+def sex_to_code(sex: Sex | None) -> int | None:
+    if sex is None:
+        return None
+    return _SEX_CODES.get(sex, DEFAULT_SEX_CODE)
 
 
 def build_feature_vector(
@@ -25,11 +57,15 @@ def build_feature_vector(
     start_date: date,
     target_date: date,
     today: date,
+    user_age: float | None = None,
+    user_height_cm: float | None = None,
+    user_weight_kg: float | None = None,
+    user_sex_code: int | None = None,
 ) -> dict[str, float]:
     """Return a feature dict for a single (goal, today) evaluation point.
 
-    Assumes `values` and `logged_dates` are sorted ascending and have length >= 1.
-    Slope is expressed in units-per-day over the last up-to-7 samples.
+    User-profile fields fall back to population defaults when missing so the
+    model always sees a full feature vector.
     """
     if len(values) == 0:
         raise ValueError("values must contain at least one log")
@@ -66,6 +102,16 @@ def build_feature_vector(
         "slope_ratio": float(slope_ratio),
         "pct_progress": pct_progress,
         "days_remaining": float(max(0, (target_date - today).days)),
+        "user_age": float(user_age if user_age is not None else DEFAULT_AGE),
+        "user_height_cm": float(
+            user_height_cm if user_height_cm is not None else DEFAULT_HEIGHT_CM
+        ),
+        "user_weight_kg": float(
+            user_weight_kg if user_weight_kg is not None else DEFAULT_WEIGHT_KG
+        ),
+        "user_sex_code": float(
+            user_sex_code if user_sex_code is not None else DEFAULT_SEX_CODE
+        ),
     }
 
 

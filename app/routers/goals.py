@@ -12,6 +12,7 @@ from app.models.enums import GoalState
 from app.models.goal import Goal
 from app.models.goal_state_event import GoalStateEvent
 from app.models.progress_log import ProgressLog
+from app.models.user import User
 from app.schemas.goal import GoalCreate, GoalRead, GoalStateEventRead
 from app.schemas.trajectory import TrajectoryRead
 from app.services.trajectory_service import compute_trajectory
@@ -61,7 +62,8 @@ async def get_trajectory(
         .order_by(ProgressLog.logged_at)
     )
     logs = result.scalars().all()
-    traj = compute_trajectory(goal, logs)
+    user = await db.get(User, goal.user_id)
+    traj = compute_trajectory(goal, logs, user=user)
     return TrajectoryRead(
         goal_id=traj.goal_id,
         pace_score=traj.pace_score,

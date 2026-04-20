@@ -28,10 +28,19 @@ async def client() -> AsyncIterator[AsyncClient]:
     await dispose_engine()
 
 
+_DEFAULT_SIGNUP = {
+    "first_name": "Ada",
+    "last_name": "Lovelace",
+    "email": "ada@example.com",
+    "password": "correct-horse-battery",
+    "height_cm": 170.0,
+    "weight_kg": 68.0,
+    "sex": "female",
+}
+
+
 async def _seed_goal_on_pace(client: AsyncClient) -> tuple[str, str]:
-    user_resp = await client.post(
-        "/users", json={"name": "Ada", "email": "ada@example.com"}
-    )
+    user_resp = await client.post("/users", json=_DEFAULT_SIGNUP)
     assert user_resp.status_code == 201, user_resp.text
     user_id = user_resp.json()["id"]
 
@@ -53,16 +62,78 @@ async def _seed_goal_on_pace(client: AsyncClient) -> tuple[str, str]:
     return user_id, goal_resp.json()["id"]
 
 
-async def test_create_user_and_fetch(client: AsyncClient) -> None:
+async def test_signup_creates_user_without_leaking_password(
+    client: AsyncClient,
+) -> None:
     resp = await client.post(
-        "/users", json={"name": "Grace", "email": "grace@example.com"}
+        "/users",
+        json={
+            "first_name": "Grace",
+            "last_name": "Hopper",
+            "email": "grace@example.com",
+            "password": "cobol-forever",
+            "height_cm": 165.0,
+        },
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 201, resp.text
     user = resp.json()
+    assert "password" not in user
+    assert "password_hash" not in user
+    assert user["first_name"] == "Grace"
+    assert user["last_name"] == "Hopper"
+    assert user["height_cm"] == 165.0
 
     fetched = await client.get(f"/users/{user['id']}")
     assert fetched.status_code == 200
     assert fetched.json()["email"] == "grace@example.com"
+
+
+async def test_signup_rejects_short_password(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/users",
+        json={
+            "first_name": "X",
+            "last_name": "Y",
+            "email": "x@example.com",
+            "password": "short",
+        },
+    )
+    assert resp.status_code == 422
+
+
+async def test_signup_rejects_duplicate_email(client: AsyncClient) -> None:
+    await client.post("/users", json=_DEFAULT_SIGNUP)
+    dup = await client.post("/users", json=_DEFAULT_SIGNUP)
+    assert dup.status_code == 409
+
+
+async def test_login_succeeds_with_correct_password(client: AsyncClient) -> None:
+    signup = await client.post("/users", json=_DEFAULT_SIGNUP)
+    assert signup.status_code == 201
+
+    resp = await client.post(
+        "/users/login",
+        json={"email": _DEFAULT_SIGNUP["email"], "password": _DEFAULT_SIGNUP["password"]},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["id"] == signup.json()["id"]
+
+
+async def test_login_fails_with_wrong_password(client: AsyncClient) -> None:
+    await client.post("/users", json=_DEFAULT_SIGNUP)
+    resp = await client.post(
+        "/users/login",
+        json={"email": _DEFAULT_SIGNUP["email"], "password": "wrong-password"},
+    )
+    assert resp.status_code == 401
+
+
+async def test_login_fails_for_unknown_email(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/users/login",
+        json={"email": "nobody@example.com", "password": "whatever-long-enough"},
+    )
+    assert resp.status_code == 401
 
 
 async def test_create_goal_defaults_on_track(client: AsyncClient) -> None:

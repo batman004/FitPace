@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.enums import GoalState, GoalType
+from app.models.enums import GoalState, GoalType, GoalUnit
 
 
 class GoalCreate(BaseModel):
@@ -14,7 +14,7 @@ class GoalCreate(BaseModel):
     goal_type: GoalType
     start_value: float
     target_value: float
-    unit: str
+    unit: GoalUnit
     start_date: date
     target_date: date
 
@@ -27,7 +27,7 @@ class GoalRead(BaseModel):
     goal_type: GoalType
     start_value: float
     target_value: float
-    unit: str
+    unit: GoalUnit
     start_date: date
     target_date: date
     current_state: GoalState

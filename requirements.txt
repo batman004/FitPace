@@ -11,6 +11,7 @@ alembic==1.14.0
 # Settings / validation
 pydantic==2.10.4
 pydantic-settings==2.7.0
+email-validator==2.2.0
 
 # ML + data
 scikit-learn==1.6.0
