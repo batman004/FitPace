@@ -19,24 +19,31 @@ depends_on = None
 
 
 def upgrade() -> None:
-    goaltype = postgresql.ENUM(
+    bind = op.get_bind()
+    postgresql.ENUM(
         "weight_loss",
         "strength_gain",
         "step_goal",
         name="goaltype",
         create_type=True,
-    )
-    goalstate = postgresql.ENUM(
+    ).create(bind, checkfirst=True)
+    postgresql.ENUM(
         "ON_TRACK",
         "AT_RISK",
         "OFF_TRACK",
         "RECOVERED",
         name="goalstate",
         create_type=True,
+    ).create(bind, checkfirst=True)
+
+    goaltype = postgresql.ENUM(
+        name="goaltype",
+        create_type=False,
     )
-    bind = op.get_bind()
-    goaltype.create(bind, checkfirst=True)
-    goalstate.create(bind, checkfirst=True)
+    goalstate = postgresql.ENUM(
+        name="goalstate",
+        create_type=False,
+    )
 
     op.create_table(
         "users",

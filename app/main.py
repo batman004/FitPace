@@ -8,7 +8,7 @@ from fastapi import FastAPI
 
 from app.config import get_settings
 from app.database import dispose_engine, init_engine
-from app.routers import goals, progress, users
+from app.routers import chat, goals, progress, users
 
 # Register ORM models on Base.metadata.
 import app.models  # noqa: F401
@@ -28,6 +28,7 @@ app = FastAPI(title="FitPace API", lifespan=lifespan)
 app.include_router(users.router)
 app.include_router(goals.router)
 app.include_router(progress.router)
+app.include_router(chat.router)
 
 
 @app.get("/health")

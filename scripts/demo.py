@@ -28,7 +28,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
-BASE_URL = os.getenv("FITPACE_URL", "http://127.0.0.1:8001")
+BASE_URL = os.getenv("FITPACE_URL", "http://127.0.0.1:8000")
 PASSWORD = "correct horse battery staple"
 
 
@@ -170,6 +170,30 @@ def main() -> None:
             "    RECOVERED. On a clean on-pace seed you may see zero transitions."
         )
         _call(client, "GET", f"/goals/{goal_id}/history")
+
+        _section("11. Natural-language chat (/chat)")
+        print(
+            "    The LLM first generates a SELECT against the database, then uses\n"
+            "    the returned rows as context to answer in plain English.\n"
+            "    Requires OPENAI_API_KEY in the server's .env; otherwise returns 503."
+        )
+        chat_resp = client.post(
+            "/chat",
+            json={
+                "user_id": user_id,
+                "question": "Am I on track for my weight-loss goal? How many logs do I have?",
+            },
+        )
+        print(f"    <- {chat_resp.status_code}")
+        if chat_resp.status_code == 503:
+            print("    (skipped: set OPENAI_API_KEY in .env and restart the API)")
+        else:
+            print(
+                "    "
+                + json.dumps(chat_resp.json(), indent=2, default=str).replace(
+                    "\n", "\n    "
+                )
+            )
 
         _section("Done")
         print(f"    User:  {user_id}")

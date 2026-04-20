@@ -184,3 +184,67 @@ async def test_progress_post_triggers_recompute_and_trajectory(
 async def test_unknown_goal_returns_404(client: AsyncClient) -> None:
     resp = await client.get("/goals/00000000-0000-0000-0000-000000000000")
     assert resp.status_code == 404
+
+
+async def test_chat_returns_503_when_no_llm_configured(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def no_llm() -> None:
+        raise RuntimeError("No LLM provider configured. Set OPENAI_API_KEY to enable /chat.")
+
+    monkeypatch.setattr("app.routers.chat.default_llm", no_llm)
+
+    user_id, _ = await _seed_goal_on_pace(client)
+    resp = await client.post(
+        "/chat",
+        json={"user_id": user_id, "question": "Am I on track?"},
+    )
+    assert resp.status_code == 503
+    assert "OPENAI_API_KEY" in resp.json()["detail"]
+
+
+async def test_chat_happy_path_with_injected_llm(client: AsyncClient) -> None:
+    from app.routers.chat import get_llm
+
+    user_id, _ = await _seed_goal_on_pace(client)
+
+    async def fake_llm(system: str, user: str) -> str:
+        if "SQL" in system:
+            return "SELECT COUNT(*) AS n FROM goals WHERE user_id = :user_id"
+        return "You have 1 active goal."
+
+    fastapi_app.dependency_overrides[get_llm] = lambda: fake_llm
+    try:
+        resp = await client.post(
+            "/chat",
+            json={"user_id": user_id, "question": "How many goals do I have?"},
+        )
+    finally:
+        fastapi_app.dependency_overrides.pop(get_llm, None)
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["sql"].lower().startswith("select")
+    assert body["rows"] == [{"n": 1}]
+    assert "1" in body["answer"]
+
+
+async def test_chat_rejects_non_select_sql(client: AsyncClient) -> None:
+    from app.routers.chat import get_llm
+
+    user_id, _ = await _seed_goal_on_pace(client)
+
+    async def malicious_llm(system: str, user: str) -> str:
+        return "DROP TABLE users"
+
+    fastapi_app.dependency_overrides[get_llm] = lambda: malicious_llm
+    try:
+        resp = await client.post(
+            "/chat",
+            json={"user_id": user_id, "question": "delete everything"},
+        )
+    finally:
+        fastapi_app.dependency_overrides.pop(get_llm, None)
+
+    assert resp.status_code == 422
+    assert "rejected" in resp.json()["detail"].lower()
