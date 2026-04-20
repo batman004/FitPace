@@ -24,7 +24,13 @@ async def _fresh_engine() -> None:
     await dispose_engine()
     engine = init_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        # Only create the throwaway table — other tests may import production models
+        # onto the same Base.metadata, which would break SQLite create_all.
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(
+                sync_conn, tables=[_Widget.__table__]
+            )
+        )
     yield
     await dispose_engine()
 
