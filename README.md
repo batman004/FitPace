@@ -290,18 +290,17 @@ network needed.
 
 Most worth reading, in order:
 
-1. [`context.md`](./context.md) — the spec I worked against.
-2. [`app/services/trajectory_service.py`](./app/services/trajectory_service.py)
+1. [`app/services/trajectory_service.py`](./app/services/trajectory_service.py)
    — ML inference with model-cache invalidation + user-profile plumbing.
-3. [`app/services/chat_service.py`](./app/services/chat_service.py) — the
+2. [`app/services/chat_service.py`](./app/services/chat_service.py) — the
    SELECT-only SQL pipeline; see `validate_sql` and `execute_sql`.
-4. [`app/services/state_machine.py`](./app/services/state_machine.py) — the
+3. [`app/services/state_machine.py`](./app/services/state_machine.py) — the
    transition rules and event emission.
-5. [`app/ml/features.py`](./app/ml/features.py) — the shared feature vector
+4. [`app/ml/features.py`](./app/ml/features.py) — the shared feature vector
    used by both training and inference.
-6. [`tests/api/test_endpoints.py`](./tests/api/test_endpoints.py) — how the
+5. [`tests/api/test_endpoints.py`](./tests/api/test_endpoints.py) — how the
    pieces fit together over HTTP.
-7. [`scripts/demo.py`](./scripts/demo.py) — runnable tour of every endpoint.
+6. [`scripts/demo.py`](./scripts/demo.py) — runnable tour of every endpoint.
 
 ---
 
