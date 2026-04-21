@@ -25,6 +25,8 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loguru import logger
+
 from app.config import get_settings
 
 LLMComplete = Callable[[str, str], Awaitable[str]]
@@ -175,12 +177,14 @@ async def execute_sql(
     statement = text(sql).bindparams(
         bindparam("user_id", type_=PGUUID(as_uuid=True))
     )
+    logger.debug("executing validated SQL user_id={} sql={}", user_id, sql)
     result = await db.execute(statement, {"user_id": user_id})
     rows: list[dict[str, Any]] = []
     for row in result.mappings():
         rows.append({k: _jsonable(v) for k, v in row.items()})
         if len(rows) >= MAX_ROWS:
             break
+    logger.info("chat SQL returned rows={} user_id={}", len(rows), user_id)
     return rows
 
 
@@ -231,11 +235,26 @@ async def answer_question(
     """End-to-end: NL question -> SQL -> rows -> NL answer."""
     complete = llm_complete or default_llm()
 
+    logger.info("chat request user_id={} question_len={}", user_id, len(question))
+
     sql_raw = await complete(
         SQL_SYSTEM_PROMPT,
         f"User id: {user_id}\nQuestion: {question}\nSQL:",
     )
-    sql = validate_sql(sql_raw)
+    logger.debug("LLM SQL draft user_id={} sql_raw={}", user_id, sql_raw)
+    try:
+        sql = validate_sql(sql_raw)
+    except UnsafeSQLError as exc:
+        # Log the full draft so we can audit bad LLM output offline. This is
+        # noisy on purpose — a failing validator is the single most important
+        # guardrail against the chat pipeline leaking cross-user data.
+        logger.warning(
+            "chat SQL rejected user_id={} reason={} sql_raw={}",
+            user_id,
+            exc,
+            sql_raw,
+        )
+        raise
 
     rows = await execute_sql(db, sql, user_id)
 
@@ -246,5 +265,11 @@ async def answer_question(
             f"Data rows (JSON):\n{json.dumps(rows, default=str)}\n\n"
             "Answer:"
         ),
+    )
+    logger.info(
+        "chat answer composed user_id={} rows={} answer_len={}",
+        user_id,
+        len(rows),
+        len(answer or ""),
     )
     return ChatResult(answer=answer.strip(), sql=sql, rows=rows)

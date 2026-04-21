@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -26,6 +27,8 @@ def init_engine(url: str, **engine_kwargs: Any) -> AsyncEngine:
     global _engine, _sessionmaker
     _engine = create_async_engine(url, **engine_kwargs)
     _sessionmaker = async_sessionmaker(_engine, expire_on_commit=False)
+    # `url` may contain credentials; SQLAlchemy's URL repr masks them for us.
+    logger.debug("db engine initialised url={}", _engine.url)
     return _engine
 
 
@@ -57,5 +60,6 @@ async def dispose_engine() -> None:
     global _engine, _sessionmaker
     if _engine is not None:
         await _engine.dispose()
+        logger.debug("db engine disposed")
     _engine = None
     _sessionmaker = None

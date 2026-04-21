@@ -19,6 +19,9 @@ make setup
 # run the API on http://127.0.0.1:8001
 make run
 
+# or: run the API AND open the demo UI in your browser
+make ui
+
 # in another terminal: exercise every endpoint end-to-end
 make demo
 
@@ -26,7 +29,8 @@ make demo
 make test
 ```
 
-Interactive API docs:
+Interactive API docs + UI:
+- **Demo UI** – <http://127.0.0.1:8001/ui/> (signup → dashboard → goals → daily logs → chat)
 - **Swagger UI** – <http://127.0.0.1:8001/docs>
 - **Scalar** (nicer enum dropdowns) – <http://127.0.0.1:8001/scalar>
 

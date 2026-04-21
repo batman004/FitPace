@@ -1,6 +1,7 @@
 """Goal state machine: transition rules + persistence helper."""
 from __future__ import annotations
 
+from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import GoalState
@@ -38,18 +39,26 @@ async def apply_transition(
     goal: Goal, pace_score: float, db: AsyncSession
 ) -> GoalStateEvent | None:
     """Write a GoalStateEvent and update goal.current_state iff the state changed."""
-    new_state = evaluate_transition(goal.current_state, pace_score)
-    if new_state == goal.current_state:
+    prev_state = goal.current_state
+    new_state = evaluate_transition(prev_state, pace_score)
+    if new_state == prev_state:
         return None
 
     event = GoalStateEvent(
         goal_id=goal.id,
-        from_state=goal.current_state,
+        from_state=prev_state,
         to_state=new_state,
         pace_score=pace_score,
-        reason=_describe(goal.current_state, new_state, pace_score),
+        reason=_describe(prev_state, new_state, pace_score),
     )
     goal.current_state = new_state
     db.add(event)
     await db.flush()
+    logger.info(
+        "goal state transition goal_id={} {}->{} pace_score={:.2f}",
+        goal.id,
+        prev_state.value,
+        new_state.value,
+        pace_score,
+    )
     return event

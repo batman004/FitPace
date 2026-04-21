@@ -9,6 +9,7 @@ from pathlib import Path
 
 import joblib
 import pandas as pd
+from loguru import logger
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
@@ -26,6 +27,7 @@ def main(
     model_path: Path = MODEL_PATH,
 ) -> Pipeline:
     df = pd.read_csv(data_path)
+    logger.info("training dataset loaded path={} rows={}", data_path, len(df))
     X = df[list(FEATURE_ORDER)].to_numpy()
     y = df["pace_score"].to_numpy()
 
@@ -41,11 +43,17 @@ def main(
     pred = model.predict(X_test)
     r2 = r2_score(y_test, pred)
     mae = mean_absolute_error(y_test, pred)
-    print(f"R2={r2:.4f} MAE={mae:.4f} n_train={len(X_train)} n_test={len(X_test)}")
+    logger.info(
+        "training complete R2={:.4f} MAE={:.4f} n_train={} n_test={}",
+        r2,
+        mae,
+        len(X_train),
+        len(X_test),
+    )
 
     model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
-    print(f"Saved model to {model_path}")
+    logger.info("model saved path={}", model_path)
     return model
 
 

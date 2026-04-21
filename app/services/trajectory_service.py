@@ -1,6 +1,7 @@
 """Core pacing logic: pace score (via ML) + ETA projection."""
 from __future__ import annotations
 
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -9,6 +10,14 @@ from typing import Any, Protocol, Sequence
 
 import joblib
 import numpy as np
+from loguru import logger
+
+# Cap projected ETA ~100 years out. Tiny rolling slopes (e.g. a user logging
+# nearly-identical values two days in a row) can make `remaining / slope` blow
+# up past `timedelta`'s max of ~2.15e9 days (C-int range) and raise
+# OverflowError. Capping yields `eta_date=None` ("cannot project") instead of
+# a 500.
+_MAX_PROJECTION_DAYS = 365 * 100
 
 from app.ml.features import (
     FEATURE_ORDER,
@@ -33,6 +42,12 @@ def _get_model() -> Any | None:
     mtime = MODEL_PATH.stat().st_mtime
     if _model_cache is None or mtime != _model_mtime:
         _model_cache = joblib.load(MODEL_PATH)
+        logger.info(
+            "model loaded path={} mtime={} reason={}",
+            MODEL_PATH,
+            mtime,
+            "initial" if _model_mtime is None else "hot-swap",
+        )
         _model_mtime = mtime
     return _model_cache
 
@@ -81,6 +96,11 @@ def compute_trajectory(
     today = today or now.date()
 
     if len(progress_logs) < 2:
+        logger.debug(
+            "trajectory cold-start goal_id={} n_logs={} returning neutral pace_score=50",
+            goal.id,
+            len(progress_logs),
+        )
         return TrajectoryResult(
             goal_id=goal.id,
             pace_score=50.0,
@@ -123,6 +143,10 @@ def compute_trajectory(
         pace_score = ground_truth_pace_score(
             feats["rolling_7d_slope"], goal.start_value, goal.target_value, total_days
         )
+        logger.warning(
+            "model.pkl missing — falling back to analytic pace_score goal_id={}",
+            goal.id,
+        )
     else:
         vec = np.array([[feats[k] for k in FEATURE_ORDER]])
         pace_score = float(np.clip(model.predict(vec)[0], 0.0, 100.0))
@@ -136,9 +160,29 @@ def compute_trajectory(
         eta_date = None
     else:
         days_needed = remaining_delta / slope
-        eta_date = today + timedelta(days=int(round(days_needed)))
+        if not math.isfinite(days_needed) or abs(days_needed) > _MAX_PROJECTION_DAYS:
+            logger.debug(
+                "eta projection capped goal_id={} slope={} remaining={} days_needed={}",
+                goal.id,
+                slope,
+                remaining_delta,
+                days_needed,
+            )
+            eta_date = None
+        else:
+            eta_date = today + timedelta(days=int(round(days_needed)))
 
     days_ahead = (goal.target_date - eta_date).days if eta_date is not None else 0
+
+    logger.debug(
+        "trajectory result goal_id={} pace_score={:.2f} eta={} days_ahead={} slope={:.4f} slope_ratio={:.4f}",
+        goal.id,
+        pace_score,
+        eta_date,
+        days_ahead,
+        slope,
+        feats["slope_ratio"],
+    )
 
     return TrajectoryResult(
         goal_id=goal.id,

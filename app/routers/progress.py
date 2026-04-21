@@ -4,6 +4,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ async def create_progress(
 ) -> ProgressLog:
     goal = await db.get(Goal, payload.goal_id)
     if goal is None:
+        logger.info("progress rejected: goal not found goal_id={}", payload.goal_id)
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="goal not found")
 
     log = ProgressLog(
@@ -48,10 +50,34 @@ async def create_progress(
     if len(logs) >= 2:
         user = await db.get(User, goal.user_id)
         traj = compute_trajectory(goal, logs, user=user)
-        await apply_transition(goal, traj.pace_score, db)
+        event = await apply_transition(goal, traj.pace_score, db)
+        if event is not None:
+            logger.info(
+                "state transition goal_id={} {}->{} pace_score={} eta={}",
+                goal.id,
+                event.from_state.value,
+                event.to_state.value,
+                traj.pace_score,
+                traj.eta_date,
+            )
+        else:
+            logger.debug(
+                "no state change goal_id={} state={} pace_score={}",
+                goal.id,
+                goal.current_state.value,
+                traj.pace_score,
+            )
 
     await db.commit()
     await db.refresh(log)
+    logger.info(
+        "progress logged log_id={} goal_id={} value={} logged_at={} logs_total={}",
+        log.id,
+        log.goal_id,
+        log.value,
+        log.logged_at,
+        len(logs),
+    )
     return log
 
 
@@ -64,4 +90,6 @@ async def list_progress(
         .where(ProgressLog.goal_id == goal_id)
         .order_by(ProgressLog.logged_at)
     )
-    return list(result.scalars().all())
+    logs = list(result.scalars().all())
+    logger.debug("list_progress goal_id={} n={}", goal_id, len(logs))
+    return logs

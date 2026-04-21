@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
 from openai import OpenAIError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ def get_llm() -> LLMComplete:
     try:
         return default_llm()
     except RuntimeError as exc:
+        logger.warning("chat unavailable: {}", exc)
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
 
 
@@ -35,17 +37,21 @@ async def chat(
     try:
         result = await answer_question(payload.question, payload.user_id, db, llm_complete=llm)
     except UnsafeSQLError as exc:
+        # chat_service.answer_question already logs the raw SQL before raising;
+        # the router just translates to a 422.
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"generated SQL was rejected: {exc}",
         )
     except SQLAlchemyError as exc:
+        logger.exception("chat SQL failed to execute user_id={}", payload.user_id)
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=f"generated SQL failed to execute: {exc}",
         )
     except OpenAIError as exc:
         # Rate limits, auth errors, connection failures, timeouts, etc.
+        logger.exception("chat LLM provider error user_id={}", payload.user_id)
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             detail=f"LLM provider error: {exc}",

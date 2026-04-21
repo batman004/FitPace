@@ -4,6 +4,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -40,10 +41,12 @@ async def create_user(
         await db.commit()
     except IntegrityError:
         await db.rollback()
+        logger.warning("signup rejected: email already registered email={}", payload.email)
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="email already registered"
         )
     await db.refresh(user)
+    logger.info("user signed up user_id={} email={}", user.id, user.email)
     return user
 
 
@@ -61,9 +64,13 @@ async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)) -> User:
     stored = user.password_hash if user else dummy_hash
     valid = verify_password(payload.password, stored)
     if user is None or not valid:
+        logger.warning(
+            "login failed email={} user_found={}", payload.email, user is not None
+        )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="invalid email or password"
         )
+    logger.info("login ok user_id={}", user.id)
     return user
 
 
@@ -71,5 +78,6 @@ async def login(payload: UserLogin, db: AsyncSession = Depends(get_db)) -> User:
 async def get_user(user_id: UUID, db: AsyncSession = Depends(get_db)) -> User:
     user = await db.get(User, user_id)
     if user is None:
+        logger.info("user lookup miss user_id={}", user_id)
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="user not found")
     return user

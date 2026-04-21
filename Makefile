@@ -34,6 +34,10 @@ run: ## Run the API against SQLite on http://$(HOST):$(PORT)
 	DATABASE_URL="$(SQLITE_URL)" $(PYTHON) -m uvicorn app.main:app \
 		--host $(HOST) --port $(PORT) --reload
 
+ui: ## Run the API and open the demo UI at http://$(HOST):$(PORT)/ui/
+	@(sleep 1 && open "http://$(HOST):$(PORT)/ui/") &
+	$(MAKE) run
+
 test: ## Run the pytest suite
 	$(PYTHON) -m pytest tests/ -q
 
